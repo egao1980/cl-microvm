@@ -9,7 +9,7 @@ TAG="${3:-}"
 BASE="${4:-cl-microvm:sbcl-2.6.7}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+trap 'rm -rf "$WORKDIR" || true' EXIT
 
 if ! docker image inspect "$BASE" >/dev/null 2>&1 || ! docker image inspect cl-microvm:builder >/dev/null 2>&1; then
     "$ROOT/scripts/build-image.sh"
@@ -21,6 +21,8 @@ args=(
     docker run --rm --privileged --entrypoint /bin/bash
     -e "CL_SYSTEM=$SYSTEM"
     -e XDG_CACHE_HOME=/opt/cache
+    -e "HOST_UID=$(id -u)"
+    -e "HOST_GID=$(id -g)"
     -v "$PROJECT:/src:ro"
     -v "$WORKDIR/context:/out"
 )
@@ -66,6 +68,7 @@ mkdir -p /mnt/root
 mount -o loop /out/root.ext4 /mnt/root
 cp -a /rootfs/. /mnt/root/
 umount /mnt/root
+chown -R "${HOST_UID}:${HOST_GID}" /out
 ')
 
 "${args[@]}"
