@@ -1,0 +1,7 @@
+.git
+dist
+**/*.ext4
+.DS_Store
+*.fasl
+.cl-repository/
+cl-repo.lock

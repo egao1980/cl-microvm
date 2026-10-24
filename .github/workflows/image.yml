@@ -1,0 +1,21 @@
+name: image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Base image
+        run: scripts/build-image.sh
+      - name: Probe and swank
+        run: scripts/smoke.sh
+      - name: Pack hello
+        run: scripts/emit-image.sh hello examples/hello
+      - name: Boot packed image offline
+        run: scripts/smoke-app.sh
