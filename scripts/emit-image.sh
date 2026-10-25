@@ -24,10 +24,19 @@ args=(
     -e "HOST_UID=$(id -u)"
     -e "HOST_GID=$(id -g)"
     -v "$PROJECT:/src:ro"
+    -v "$ROOT/image/pack-inside.lisp:/opt/cl-microvm/pack-inside.lisp:ro"
+    -v "$ROOT/image/boot.lisp:/opt/cl-microvm/boot.lisp:ro"
     -v "$WORKDIR/context:/out"
 )
 if [[ -n "${CL_REPOSITORY:-}" && -d "$CL_REPOSITORY" ]]; then
     args+=(-v "$CL_REPOSITORY:/opt/cl-repository:ro")
+fi
+workspace="$(cd "$ROOT/.." && pwd)"
+if [[ -z "${CL_WORKSPACE:-}" && -f "$workspace/http-protocol/http-protocol.asd" ]]; then
+    CL_WORKSPACE="$workspace"
+fi
+if [[ -n "${CL_WORKSPACE:-}" && -d "$CL_WORKSPACE" ]]; then
+    args+=(-v "$CL_WORKSPACE:/workspace:ro" -e CL_WORKSPACE=/workspace)
 fi
 if [[ -n "${QUICKLISP_SETUP:-}" && -f "$QUICKLISP_SETUP" ]]; then
     ql_dir="$(cd "$(dirname "$QUICKLISP_SETUP")" && pwd)"
@@ -38,7 +47,18 @@ set -eu
 rm -rf /opt/app
 mkdir -p /opt/app /opt/cl /opt/cache /out/app /out/cl /out/cache /rootfs/opt/app /rootfs/opt/cl /rootfs/opt/cache
 cp -a /src/. /opt/app/
+if [ -n "${QUICKLISP_SETUP:-}" ]; then
+    rm -rf /tmp/quicklisp
+    cp -a /quicklisp /tmp/quicklisp
+    export QUICKLISP_SETUP=/tmp/quicklisp/setup.lisp
+fi
 /usr/local/bin/sbcl --disable-debugger --non-interactive --load /opt/cl-microvm/pack-inside.lisp
+# Fasls are keyed by truename. Drop Quicklisp and workspace compiles; the guest has neither tree.
+if [ -d /opt/cache/common-lisp ]; then
+    find /opt/cache/common-lisp -mindepth 2 -maxdepth 2 -type d ! -name opt -exec rm -rf {} +
+fi
+cp /opt/cl-microvm/boot.lisp /rootfs/opt/cl-microvm/boot.lisp
+cp /opt/cl-microvm/boot.lisp /out/boot.lisp
 rm -rf /rootfs/opt/app /rootfs/opt/cl
 mkdir -p /rootfs/opt/app /rootfs/opt/cl /rootfs/opt/cache
 cp -a /opt/app/. /rootfs/opt/app/
@@ -81,6 +101,7 @@ fi
 
 cat > "$WORKDIR/context/Dockerfile" <<EOF
 FROM ${BASE}
+COPY boot.lisp /opt/cl-microvm/boot.lisp
 COPY app/ /opt/app/
 COPY cl/ /opt/cl/
 COPY cache/ /opt/cache/

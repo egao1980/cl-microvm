@@ -7,7 +7,14 @@
         (finish-output *error-output*)
         (sb-ext:exit :code 1)))
 
+;; Fasls compiled in the packer already reference these contribs. The loader
+;; interns those symbols before any top-level REQUIRE in the same file runs,
+;; so the packages have to exist before ASDF loads the closure.
 (require :sb-bsd-sockets)
+(require :sb-posix)
+(require :sb-rotate-byte)
+(require :sb-cltl2)
+(require :sb-introspect)
 
 (defun env (name)
   (let ((value (uiop:getenv name)))
