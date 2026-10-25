@@ -11,7 +11,13 @@ scripts/emit-image.sh hello examples/hello
 scripts/smoke-app.sh
 ```
 
-Deps need `CL_REPOSITORY` (checkout of `egao1980/cl-repository`) and `QUICKLISP_SETUP` so the builder can load the client. The project closure itself is installed from `ghcr.io/egao1980/cl-systems` with `:default-source :oci`.
+Deps need `CL_REPOSITORY` (checkout of `egao1980/cl-repository`) and `QUICKLISP_SETUP` so the builder can load the client. The project closure itself is installed from `ghcr.io/egao1980/cl-systems` with `:default-source :oci`. `examples/calendar` is the Russian holiday decree check:
+
+```sh
+CL_REPOSITORY=../cl-repository QUICKLISP_SETUP=~/quicklisp/setup.lisp \
+  scripts/emit-image.sh calendar-demo examples/calendar
+docker run --rm --network none -e CL_ENTRY=calendar-demo:main cl-microvm-app:calendar-demo-0.1.0
+```
 
 Guest env: `CL_SYSTEM`, `CL_ENTRY=package:function`, `SWANK_PORT`, `SWANK_INTERFACE` (default `0.0.0.0`), `SWANK_SECRET`. Packed images also write `CL_SYSTEM` to `/etc/cl-microvm.env` so the ext4 guest matches the container. Swank is slime v2.31 unpacked into the base image at build time.
 

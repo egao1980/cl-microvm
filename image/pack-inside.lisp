@@ -56,29 +56,87 @@
               (walk child))))))
     (nreverse external)))
 
+(defun quicklisp-source-p (system)
+  (let* ((sys (if (typep system 'asdf:system)
+                  system
+                  (asdf:find-system system nil)))
+         (file (and sys (ignore-errors (asdf:system-source-file sys))))
+         (text (and file (namestring file))))
+    (and text (search "quicklisp" text :test #'char-equal))))
+
 (defun load-client ()
   (let ((setup (uiop:getenv "QUICKLISP_SETUP")))
     (when (and setup (probe-file setup))
       (load setup)))
-  ;; Quicklisp setup replaces the source registry. Put the project and the
-  ;; client checkout back in front and keep the Quicklisp systems.
+  ;; The client checkout is not a closed tree: cl-oci-client needs sibling
+  ;; systems such as http-protocol. CL_WORKSPACE is that tree, and only for
+  ;; this load. Quicklisp covers the rest of the bootstrap.
+  (let ((workspace (uiop:getenv "CL_WORKSPACE")))
+    (asdf:initialize-source-registry
+     `(:source-registry
+       (:tree #p"/opt/app/")
+       (:tree #p"/opt/cl-repository/")
+       ,@(when (and workspace (plusp (length workspace)))
+           `((:tree ,(uiop:ensure-directory-pathname workspace))))
+       :inherit-configuration)))
+  (asdf:load-system "cl-repository-client"))
+
+(defun image-source-p (system)
+  (let* ((sys (if (typep system 'asdf:system)
+                  system
+                  (asdf:find-system system nil)))
+         (file (and sys (ignore-errors (asdf:system-source-file sys))))
+         (text (and file (namestring file))))
+    (and text
+         (or (uiop:string-prefix-p "/opt/app/" text)
+             (uiop:string-prefix-p "/opt/cl/" text)
+             (uiop:string-prefix-p "/opt/cl-repository/" text)))))
+
+(defun isolate-closure ()
+  "The guest has /opt/app and /opt/cl only. Forget every system the
+bootstrap found in Quicklisp or CL_WORKSPACE so ENSURE-SYSTEM-DEPENDENCIES
+installs that closure from GHCR. Packages already loaded stay loaded."
+  (setf asdf:*system-definition-search-functions*
+        (remove-if (lambda (fn)
+                     (and (symbolp fn)
+                          (let ((pkg (symbol-package fn)))
+                            (and pkg
+                                 (let ((name (package-name pkg)))
+                                   (or (search "QUICKLISP" name :test #'char-equal)
+                                       (member name '("QL" "QL-DIST" "QL-SETUP")
+                                               :test #'string-equal)))))))
+                   asdf:*system-definition-search-functions*))
   (asdf:initialize-source-registry
    '(:source-registry
      (:tree #p"/opt/app/")
+     (:tree #p"/opt/cl/")
      (:tree #p"/opt/cl-repository/")
-     :inherit-configuration))
-  (asdf:load-system "cl-repository-client"))
+     :ignore-inherited-configuration))
+  (dolist (name (copy-list (asdf:registered-systems)))
+    (let ((sys (asdf:registered-system name)))
+      (when (and sys (not (image-source-p sys)))
+        (asdf:clear-system name)))))
 
-(defun refuse-quicklisp (names)
-  (dolist (name names)
-    (let* ((sys (asdf:find-system name nil))
-           (file (and sys (asdf:system-source-file sys)))
-           (text (and file (namestring file))))
-      (when (and text (search "quicklisp" text))
-        (error "refusing Quicklisp system ~A from ~A" name text)))))
+(defun assert-no-quicklisp (name)
+  (let ((seen (make-hash-table :test #'equal)))
+    (labels ((walk (system-name)
+               (let ((n (string-downcase system-name)))
+                 (unless (or (gethash n seen) (builtin-p n))
+                   (setf (gethash n seen) t)
+                   (let ((sys (or (asdf:find-system n nil)
+                                  (error "closure system ~A is not installed" n))))
+                     (when (quicklisp-source-p sys)
+                       (error "refusing Quicklisp system ~A from ~A"
+                              n (namestring (asdf:system-source-file sys))))
+                     (dolist (dep (asdf:system-depends-on sys))
+                       (let ((child (dep-name dep)))
+                         (when child
+                           (walk child)))))))))
+      (walk name))))
 
-(defun install-deps (names)
+(defun install-deps ()
   (load-client)
+  (isolate-closure)
   (setf (symbol-value (find-symbol "*SYSTEMS-ROOT*" :cl-repository-client/installer))
         (uiop:ensure-directory-pathname #p"/opt/cl/"))
   (uiop:symbol-call :cl-repo :add-registry "https://ghcr.io"
@@ -90,15 +148,15 @@
                                              :cl-repository-client/quickload)))))
     (when missing
       (error "not on ghcr.io/egao1980/cl-systems: ~{~A~^, ~}" missing)))
-  (refuse-quicklisp names))
+  (assert-no-quicklisp *system*))
 
 (let ((deps (external-deps *system*)))
   (when deps
-    (install-deps deps))
-  (asdf:load-system *system*)
-  (let* ((sys (asdf:find-system *system*))
-         (version (or (asdf:component-version sys) "0.0.0")))
-    (ensure-directories-exist "/out/")
-    (with-open-file (out "/out/meta" :direction :output :if-exists :supersede)
-      (format out "system ~A~%version ~A~%" *system* version)))
-  (sb-ext:exit :code 0))
+    (install-deps)))
+(asdf:load-system *system*)
+(let* ((sys (asdf:find-system *system*))
+       (version (or (asdf:component-version sys) "0.0.0")))
+  (ensure-directories-exist "/out/")
+  (with-open-file (out "/out/meta" :direction :output :if-exists :supersede)
+    (format out "system ~A~%version ~A~%" *system* version)))
+(sb-ext:exit :code 0)
